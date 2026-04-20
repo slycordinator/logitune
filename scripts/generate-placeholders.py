@@ -13,10 +13,10 @@ Requires: Solaar installed (logitech_receiver package available on PYTHONPATH)
 
 import argparse
 import json
-import os
 import re
 import sys
 import inspect
+from pathlib import Path
 
 def slugify(name):
     """Convert device name to directory slug: 'MX Master 3S' -> 'mx-master-3s'"""
@@ -144,10 +144,10 @@ def main():
 
     for device in sorted(devices, key=lambda d: d['name']):
         slug = slugify(device['name'])
-        dir_path = os.path.join(args.output_dir, slug)
-        json_path = os.path.join(dir_path, 'descriptor.json')
+        dir_path = Path(args.output_dir) / slug
+        json_path = dir_path / 'descriptor.json'
 
-        if args.skip_existing and os.path.exists(json_path):
+        if args.skip_existing and json_path.exists():
             skipped += 1
             continue
 
@@ -157,11 +157,11 @@ def main():
             print(f"  Would create: {dir_path}/")
             print(f"    {device['name']} PIDs={device['pids']} HID++2.0={device['hidpp2']}")
         else:
-            os.makedirs(dir_path, exist_ok=True)
-            with open(json_path, 'w') as f:
+            dir_path.mkdir(parents=True, exist_ok=True)
+            with json_path.open('w') as f:
                 json.dump(descriptor, f, indent=2)
                 f.write('\n')
-            print(f"  Created: {dir_path}/descriptor.json")
+            print(f"  Created: {json_path}")
             created += 1
 
     print(f"\nDone: {created} created, {skipped} skipped (already exist)")
