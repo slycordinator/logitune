@@ -11,37 +11,41 @@ Usage:
 
 import argparse
 import json
-import os
 import struct
 import sys
+from pathlib import Path
 
-def extract_depot(depot_path, output_dir):
+SKIP_MAGIC = 0x20170110
+
+def extract_depot(depot_path: Path, output_dir: Path) -> list[str]:
     """Extract all files from a .depot container."""
-    with open(depot_path, 'rb') as f:
+    with depot_path.open('rb') as f:
         magic = struct.unpack('<I', f.read(4))[0]
-        if magic != 0x20170110:
+        if magic != SKIP_MAGIC:
             print(f"  Skip: not a depot file (magic 0x{magic:08x})", file=sys.stderr)
             return []
 
-        json_len = struct.unpack('<I', f.read(4))[0]
-        header = json.loads(f.read(json_len))
-        files = header.get('files', [])
+        json_len: int = struct.unpack('<I', f.read(4))[0]
+        header: dict = json.loads(f.read(json_len))
+        files: list[dict] = header.get('files', [])
 
-        os.makedirs(output_dir, exist_ok=True)
-        extracted = []
+        output_dir.mkdir(parents=True, exist_ok=True)
+        extracted: list[str] = []
 
         for entry in files:
-            name = entry['name']
-            size = struct.unpack('<I', f.read(4))[0]
-            data = f.read(size)
+            name: str = entry['name']
+            size: int = struct.unpack('<I', f.read(4))[0]
+            data: bytes = f.read(size)
 
-            out_path = os.path.join(output_dir, name)
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            with open(out_path, 'wb') as out:
+            out_path: Path = output_dir / name
+            with out_path.open('wb') as out:
                 out.write(data)
             extracted.append(name)
 
     return extracted
+
+def is_image_file(filepath: Path | str) -> bool:
+    return Path(filepath).suffix.lower() in ('.png', '.jpg', '.gif')
 
 def main():
     parser = argparse.ArgumentParser(description='Extract Logitech Options+ .depot files')
@@ -53,35 +57,35 @@ def main():
     args = parser.parse_args()
 
     if args.all:
-        depot_dir = args.input
-        depot_files = [os.path.join(depot_dir, f) for f in os.listdir(depot_dir) if f.endswith('.depot')]
+        depot_dir: Path = Path(args.input)
+        depot_files = list(depot_dir.glob('*.depot'))
     else:
-        depot_files = [args.input]
+        depot_files = [Path(args.input)]
 
     total_files = 0
     total_images = 0
 
     for depot_path in sorted(depot_files):
-        depot_name = os.path.basename(depot_path).replace('.depot', '')
+        depot_name: str = depot_path.stem
 
         try:
-            with open(depot_path, 'rb') as f:
-                magic = struct.unpack('<I', f.read(4))[0]
-                if magic != 0x20170110:
+            with depot_path.open('rb') as f:
+                magic: int = struct.unpack('<I', f.read(4))[0]
+                if magic != SKIP_MAGIC:
                     continue
-                json_len = struct.unpack('<I', f.read(4))[0]
-                header = json.loads(f.read(json_len))
+                json_len: int = struct.unpack('<I', f.read(4))[0]
+                header: dict = json.loads(f.read(json_len))
         except Exception:
             continue
 
-        files = header.get('files', [])
-        has_front = any(f['name'] == 'front.png' for f in files)
-        has_metadata = any(f['name'] == 'metadata.json' for f in files)
+        files: list[dict] = header.get('files', [])
+        file_names: list[str] = [f['name'] for f in files]
+        has_front: bool = 'front.png' in file_names
+        has_metadata: bool = 'metadata.json' in file_names
 
         if args.list:
             if has_front or has_metadata:
-                file_names = [f['name'] for f in files]
-                img_count = sum(1 for n in file_names if n.endswith(('.png', '.jpg', '.gif')))
+                img_count: int = sum(1 for n in file_names if is_image_file(n))
                 print(f"{depot_name}: {len(files)} files ({img_count} images)")
                 if has_metadata:
                     print(f"  has metadata.json")
@@ -90,15 +94,16 @@ def main():
         if args.images_only and not has_front:
             continue
 
-        out_dir = os.path.join(args.output_dir, depot_name)
-        extracted = extract_depot(depot_path, out_dir)
+        out_dir = Path(args.output_dir) / depot_name
+        extracted: list[str] = extract_depot(depot_path, out_dir)
 
         if args.images_only:
             for name in extracted:
-                if not name.endswith(('.png', '.jpg', '.gif')):
-                    os.remove(os.path.join(out_dir, name))
+                remove_path: Path = out_dir / name
+                if not is_image_file(remove_path):
+                    remove_path.unlink()
 
-        img_count = sum(1 for n in extracted if n.endswith(('.png', '.jpg', '.gif')))
+        img_count: int = sum(1 for n in extracted if is_image_file(n))
         total_files += len(extracted)
         total_images += img_count
 
