@@ -47,36 +47,36 @@ def build(entry: DeviceDbEntry, depot: Depot) -> dict:
 
     controls: list[dict] = list(_DEFAULT_CONTROLS)
     button_hotspots: list[dict] = []
-    for idx_offset, b in enumerate(ordered_buttons):
+    for idx_offset, button in enumerate(ordered_buttons):
         button_index = len(_DEFAULT_CONTROLS) + idx_offset
         controls.append({
-            "controlId": f"0x{b.cid:04X}",
+            "controlId": f"0x{button.cid:04X}",
             "buttonIndex": button_index,
-            "defaultName": b.name,
-            "defaultActionType": b.action_type,
-            "configurable": b.configurable,
+            "defaultName": button.name,
+            "defaultActionType": button.action_type,
+            "configurable": button.configurable,
         })
         button_hotspots.append({
             "buttonIndex": button_index,
-            "xPct": b.x_pct,
-            "yPct": b.y_pct,
-            "side": "right" if b.x_pct > 0.5 else "left",
+            "xPct": button.x_pct,
+            "yPct": button.y_pct,
+            "side": "right" if button.x_pct > 0.5 else "left",
             "labelOffsetYPct": 0.0,
         })
 
     scroll_hotspots: list[dict] = []
-    for slot_index, s in enumerate(ordered_scroll, start=1):
+    for slot_index, scroll in enumerate(ordered_scroll, start=1):
         scroll_hotspots.append({
-            "kind": s.kind,
+            "kind": scroll.kind,
             "buttonIndex": -slot_index,
-            "xPct": s.x_pct,
-            "yPct": s.y_pct,
-            "side": "right" if s.x_pct > 0.5 else "left",
+            "xPct": scroll.x_pct,
+            "yPct": scroll.y_pct,
+            "side": "right" if scroll.x_pct > 0.5 else "left",
             "labelOffsetYPct": 0.0,
         })
 
     easy_switch = [
-        {"xPct": s.x_pct, "yPct": s.y_pct} for s in ordered_easyswitch
+        {"xPct": switch.x_pct, "yPct": switch.y_pct} for switch in ordered_easyswitch
     ]
 
     images: dict[str, str] = {}
