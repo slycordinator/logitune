@@ -15,10 +15,10 @@ def sort_buttons(buttons: list[ButtonSlot]) -> list[ButtonSlot]:
     Shift / Thumb — identical to the shipped descriptor ordering, so
     position-based profile persistence keeps working.
     """
-    def key(b: ButtonSlot) -> tuple[int, int]:
-        if b.cid == THUMBWHEEL_CID:
+    def key(button: ButtonSlot) -> tuple[int, int]:
+        if button.cid == THUMBWHEEL_CID:
             return (1, 0)
-        return (0, b.cid)
+        return (0, button.cid)
     return sorted(buttons, key=key)
 
 
@@ -31,12 +31,12 @@ def sort_scroll(scrolls: list[ScrollSlot]) -> list[ScrollSlot]:
     stable.
     """
     return sorted(
-        (s for s in scrolls if s.kind in _SCROLL_KIND_ORDER),
-        key=lambda s: _SCROLL_KIND_ORDER[s.kind],
+        (scroll for scroll in scrolls if scroll.kind in _SCROLL_KIND_ORDER),
+        key=lambda scroll: _SCROLL_KIND_ORDER[scroll.kind],
     )
 
 
 def sort_easyswitch(slots: list[EasySwitchSlot]) -> list[EasySwitchSlot]:
     """Sort easy-switch slots by 1-based index; keeps only the first three."""
-    ordered = sorted(slots, key=lambda s: s.index)
+    ordered = sorted(slots, key=lambda slot: slot.index)
     return ordered[:3]
