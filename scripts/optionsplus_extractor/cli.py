@@ -70,7 +70,8 @@ def run(
             continue
 
         out_dir.mkdir(parents=True, exist_ok=True)
-        with open(out_dir / "descriptor.json", "w") as f:
+        descriptor_path = out_dir / "descriptor.json"
+        with descriptor_path.open("w") as f:
             json.dump(desc, f, indent=2)
             f.write("\n")
         shutil.copy2(depot.front_image, out_dir / "front.png")
@@ -89,7 +90,7 @@ def run(
 
     report_path = output_dir / "extraction-report.json"
     output_dir.mkdir(parents=True, exist_ok=True)
-    with open(report_path, "w") as f:
+    with report_path.open("w") as f:
         json.dump({
             "processed": processed,
             "skipped_no_images": skipped_no_images,
