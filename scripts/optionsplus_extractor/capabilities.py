@@ -42,7 +42,7 @@ def features_from_capabilities(caps: dict) -> dict:
 def dpi_from_capabilities(caps: dict) -> dict:
     """Read DPI range from highResolutionSensorInfo; fall back to safe defaults."""
     info = caps.get("highResolutionSensorInfo")
-    if info:
+    if isinstance(info, dict):
         return {
             "min": info.get("minDpiValueSensorOn", 200),
             "max": info.get("maxDpiValueSensorOn", 4000),
