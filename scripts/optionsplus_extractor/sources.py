@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import glob
 import json
-import os
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,38 +43,41 @@ def load_device_db(main_dir: Path) -> dict[str, DeviceDbEntry]:
             # in with the devices JSON (or older files in a different
             # encoding). Skip and keep going.
             continue
-        for d in data.get("devices", []):
-            if d.get("type") != "MOUSE":
+        device: dict
+        for device in data.get("devices", []):
+            if device.get("type") != "MOUSE":
                 continue
-            depot = d.get("depot", "")
+            depot = device.get("depot", "")
             if not depot:
                 continue
-            pids = _extract_pids(d)
+            pids = _extract_pids(device)
             entry = result.get(depot)
             if entry is None:
                 entry = DeviceDbEntry(
                     depot=depot,
-                    name=d.get("displayName", depot),
+                    name=device.get("displayName", depot),
                     product_ids=sorted(pids),
-                    capabilities=d.get("capabilities", {}) or {},
+                    capabilities=device.get("capabilities", {}) or {},
                 )
                 result[depot] = entry
             else:
                 merged = sorted(set(entry.product_ids) | pids)
                 entry.product_ids = merged
-                if not entry.capabilities and d.get("capabilities"):
-                    entry.capabilities = d["capabilities"]
+                if not entry.capabilities and device.get("capabilities"):
+                    entry.capabilities = device["capabilities"]
     return result
 
 
 def _extract_pids(device_entry: dict) -> set[str]:
     pids: set[str] = set()
+    mode: dict
     for mode in device_entry.get("modes", []) or []:
+        iface: dict
         for iface in mode.get("interfaces", []) or []:
-            iid = iface.get("id", "") or ""
-            if "046d" not in iid.lower():
+            iface_id = iface.get("id", "") or ""
+            if "046d" not in iface_id.lower():
                 continue
-            pid_hex = iid.lower().split("_")[-1] if "_" in iid else ""
+            pid_hex = iface_id.lower().split("_")[-1] if "_" in iface_id else ""
             if pid_hex:
                 pids.add(f"0x{pid_hex}")
     return pids
@@ -104,21 +106,21 @@ def load_depot(depot_dir: Path) -> Depot:
 
 
 def _load_first(base: Path, names: list[str]) -> Optional[dict]:
-    for n in names:
-        p = base / n
-        if p.exists():
+    for name in names:
+        filepath = base / name
+        if filepath.exists():
             try:
-                return json.load(open(p))
+                return json.load(open(filepath))
             except (OSError, json.JSONDecodeError):
                 return None
     return None
 
 
 def _find_first(base: Path, names: list[str]) -> Optional[Path]:
-    for n in names:
-        p = base / n
-        if p.exists():
-            return p
+    for name in names:
+        filepath = base / name
+        if filepath.exists():
+            return filepath
     return None
 
 
