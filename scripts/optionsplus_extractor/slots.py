@@ -115,8 +115,8 @@ _CID_SUFFIX_RE = re.compile(r"_c(\d+)$")
 
 
 def _cid_from_slot_id(slot_id: str) -> Optional[int]:
-    m = _CID_SUFFIX_RE.search(slot_id or "")
-    return int(m.group(1)) if m else None
+    match = _CID_SUFFIX_RE.search(slot_id or "")
+    return int(match.group(1)) if match else None
 
 
 def _is_thumbwheel_slot(slot_id: str, slot_name: str) -> bool:
@@ -128,9 +128,9 @@ def _is_thumbwheel_slot(slot_id: str, slot_name: str) -> bool:
 
 def _parse_buttons(assignments: list[dict]) -> list[ButtonSlot]:
     out: list[ButtonSlot] = []
-    for a in assignments:
-        slot_id = a.get("slotId", "") or ""
-        slot_name = a.get("slotName", "") or ""
+    for assignment in assignments:
+        slot_id = assignment.get("slotId", "") or ""
+        slot_name = assignment.get("slotName", "") or ""
 
         cid = _cid_from_slot_id(slot_id)
         is_thumb = _is_thumbwheel_slot(slot_id, slot_name)
@@ -145,7 +145,7 @@ def _parse_buttons(assignments: list[dict]) -> list[ButtonSlot]:
             )
         name, action_type, configurable = SLOT_NAME_MAP[slot_name]
 
-        x, y = _marker_to_pct(a.get("marker", {}) or {})
+        x, y = _marker_to_pct(assignment.get("marker", {}) or {})
         out.append(ButtonSlot(
             cid=cid,
             name=name,
@@ -170,15 +170,15 @@ def _scroll_kind_from_slot_id(slot_id: str) -> Optional[str]:
 
 def _parse_scroll(assignments: list[dict]) -> list[ScrollSlot]:
     out: list[ScrollSlot] = []
-    for a in assignments:
-        slot_id = a.get("slotId", "") or ""
+    for assignment in assignments:
+        slot_id = assignment.get("slotId", "") or ""
         kind = _scroll_kind_from_slot_id(slot_id)
         if kind is None:
             # No recognized kind — skip rather than raise. Scroll-image
             # assignments are a known superset of what PointScrollPage
             # renders.
             continue
-        x, y = _marker_to_pct(a.get("marker", {}) or {})
+        x, y = _marker_to_pct(assignment.get("marker", {}) or {})
         out.append(ScrollSlot(kind=kind, x_pct=x, y_pct=y))
     return out
 
@@ -208,13 +208,13 @@ def _parse_easyswitch(
     None to fall back to naive marker/100 behaviour.
     """
     out: list[EasySwitchSlot] = []
-    for a in assignments:
-        slot_id = a.get("slotId", "") or ""
-        m = _EASYSWITCH_RE.search(slot_id)
-        if not m:
+    for assignment in assignments:
+        slot_id = assignment.get("slotId", "") or ""
+        match = _EASYSWITCH_RE.search(slot_id)
+        if not match:
             continue
-        idx = int(m.group(1))
-        marker = a.get("marker", {}) or {}
+        idx = int(match.group(1))
+        marker = assignment.get("marker", {}) or {}
         x_raw = float(marker.get("x", 0)) / 100.0
         y_raw = float(marker.get("y", 0)) / 100.0
         if back_image_aspect is not None:
@@ -224,5 +224,5 @@ def _parse_easyswitch(
         x_pct = round(max(0.0, min(1.0, x_pct)), 3)
         y_pct = round(max(0.0, min(1.0, y_raw)), 3)
         out.append(EasySwitchSlot(index=idx, x_pct=x_pct, y_pct=y_pct))
-    out.sort(key=lambda s: s.index)
+    out.sort(key=lambda slot: slot.index)
     return out

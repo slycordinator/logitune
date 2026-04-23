@@ -158,9 +158,9 @@ def main():
             print(f"    {device['name']} PIDs={device['pids']} HID++2.0={device['hidpp2']}")
         else:
             dir_path.mkdir(parents=True, exist_ok=True)
-            with json_path.open('w') as f:
-                json.dump(descriptor, f, indent=2)
-                f.write('\n')
+            with json_path.open('w') as output:
+                json.dump(descriptor, output, indent=2)
+                output.write('\n')
             print(f"  Created: {json_path}")
             created += 1
 

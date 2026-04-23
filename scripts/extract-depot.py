@@ -19,14 +19,14 @@ SKIP_MAGIC = 0x20170110
 
 def extract_depot(depot_path: Path, output_dir: Path) -> list[str]:
     """Extract all files from a .depot container."""
-    with depot_path.open('rb') as f:
-        magic = struct.unpack('<I', f.read(4))[0]
+    with depot_path.open('rb') as input:
+        magic = struct.unpack('<I', input.read(4))[0]
         if magic != SKIP_MAGIC:
             print(f"  Skip: not a depot file (magic 0x{magic:08x})", file=sys.stderr)
             return []
 
-        json_len: int = struct.unpack('<I', f.read(4))[0]
-        header: dict = json.loads(f.read(json_len))
+        json_len: int = struct.unpack('<I', input.read(4))[0]
+        header: dict = json.loads(input.read(json_len))
         files: list[dict] = header.get('files', [])
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -34,8 +34,8 @@ def extract_depot(depot_path: Path, output_dir: Path) -> list[str]:
 
         for entry in files:
             name: str = entry['name']
-            size: int = struct.unpack('<I', f.read(4))[0]
-            data: bytes = f.read(size)
+            size: int = struct.unpack('<I', input.read(4))[0]
+            data: bytes = input.read(size)
 
             out_path: Path = output_dir / name
             with out_path.open('wb') as out:
@@ -69,23 +69,23 @@ def main():
         depot_name: str = depot_path.stem
 
         try:
-            with depot_path.open('rb') as f:
-                magic: int = struct.unpack('<I', f.read(4))[0]
+            with depot_path.open('rb') as input:
+                magic: int = struct.unpack('<I', input.read(4))[0]
                 if magic != SKIP_MAGIC:
                     continue
-                json_len: int = struct.unpack('<I', f.read(4))[0]
-                header: dict = json.loads(f.read(json_len))
+                json_len: int = struct.unpack('<I', input.read(4))[0]
+                header: dict = json.loads(input.read(json_len))
         except Exception:
             continue
 
         files: list[dict] = header.get('files', [])
-        file_names: list[str] = [f['name'] for f in files]
+        file_names: list[str] = [file['name'] for file in files]
         has_front: bool = 'front.png' in file_names
         has_metadata: bool = 'metadata.json' in file_names
 
         if args.list:
             if has_front or has_metadata:
-                img_count: int = sum(1 for n in file_names if is_image_file(n))
+                img_count: int = sum(1 for filename in file_names if is_image_file(filename))
                 print(f"{depot_name}: {len(files)} files ({img_count} images)")
                 if has_metadata:
                     print(f"  has metadata.json")
@@ -103,7 +103,7 @@ def main():
                 if not is_image_file(remove_path):
                     remove_path.unlink()
 
-        img_count: int = sum(1 for n in extracted if is_image_file(n))
+        img_count: int = sum(1 for filename in extracted if is_image_file(filename))
         total_files += len(extracted)
         total_images += img_count
 

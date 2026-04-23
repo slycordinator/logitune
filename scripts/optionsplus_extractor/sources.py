@@ -132,15 +132,15 @@ def read_png_dimensions(path: Path) -> Optional[tuple[int, int]]:
     result as optional.
     """
     try:
-        with open(path, "rb") as f:
-            sig = f.read(8)
+        with path.open("rb") as input:
+            sig = input.read(8)
             if sig != b"\x89PNG\r\n\x1a\n":
                 return None
-            f.read(4)  # IHDR chunk length
-            chunk_type = f.read(4)
+            input.read(4)  # IHDR chunk length
+            chunk_type = input.read(4)
             if chunk_type != b"IHDR":
                 return None
-            w, h = struct.unpack(">II", f.read(8))
-            return (w, h)
+            width, height = struct.unpack(">II", input.read(8))
+            return (width, height)
     except (OSError, struct.error):
         return None

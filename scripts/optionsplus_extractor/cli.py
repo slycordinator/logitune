@@ -71,9 +71,9 @@ def run(
 
         out_dir.mkdir(parents=True, exist_ok=True)
         descriptor_path = out_dir / "descriptor.json"
-        with descriptor_path.open("w") as f:
-            json.dump(desc, f, indent=2)
-            f.write("\n")
+        with descriptor_path.open("w") as output:
+            json.dump(desc, output, indent=2)
+            output.write("\n")
         shutil.copy2(depot.front_image, out_dir / "front.png")
         if depot.side_image is not None:
             shutil.copy2(depot.side_image, out_dir / "side.png")
@@ -90,12 +90,12 @@ def run(
 
     report_path = output_dir / "extraction-report.json"
     output_dir.mkdir(parents=True, exist_ok=True)
-    with report_path.open("w") as f:
+    with report_path.open("w") as output:
         json.dump({
             "processed": processed,
             "skipped_no_images": skipped_no_images,
             "unknown_slot_names": unknown_slot_reports,
-        }, f, indent=2)
+        }, output, indent=2)
 
     print(
         f"Done: {processed} generated, {skipped_no_images} missing images, "
