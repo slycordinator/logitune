@@ -109,17 +109,20 @@ logitune
 
 ## 🖱️ Supported Devices
 
+<!-- BEGIN DEVICES TABLE -->
 | Device | Status | Battery | DPI | SmartShift | Thumb wheel | Button remap | Gestures | Smooth scroll | Easy-Switch |
-|--------|:------:|:------:|:---:|:----------:|:-----------:|:------------:|:--------:|:-------------:|:-----------:|
-| MX Master 3S | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+|--------|:------:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | MX Master 2S | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MX Master 4  | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ off | ✅ |
-| MX Anywhere 3S              | 🧪 Beta     | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| MX Anywhere 3S for Business | 🧪 Beta     | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| MX Anywhere 3               | 🧪 Beta     | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| MX Anywhere 3 for Business  | 🧪 Beta     | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| MX Vertical                 | 🧪 Beta     | ✅ | ✅ | — | — | ✅ | — | ✅ | ✅ |
-| MX Vertical for Business    | 🧪 Beta     | ✅ | ✅ | — | — | ✅ | — | ✅ | ✅ |
+| MX Master 3 | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MX Master 3S | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MX Master 4 | ✅ Verified | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| MX Anywhere 3 | 🧪 Beta | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
+| MX Anywhere 3 for Business | 🧪 Beta | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
+| MX Anywhere 3S | 🧪 Beta | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
+| MX Anywhere 3S for Business | 🧪 Beta | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
+| MX Vertical | 🧪 Beta | ✅ | ✅ | — | — | ✅ | — | ✅ | ✅ |
+| MX Vertical for Business | 🧪 Beta | ✅ | ✅ | — | — | ✅ | — | ✅ | ✅ |
+<!-- END DEVICES TABLE -->
 
 > **MX Master 4 smooth scrolling** is disabled in the shipped descriptor: the hardware does not respond correctly to the HID++ configuration used on MX Master 2S / 3S. Regular scroll wheel and SmartShift work normally; only sub-tick smoothing is unavailable. Re-enable yourself by setting `"smoothScroll": true` in `devices/mx-master-4/descriptor.json` if your unit behaves differently; if it works we will promote the default.
 
@@ -129,19 +132,19 @@ Other Logitech HID++ 2.0 devices can be added by contributing a [device descript
 
 ## 🖥️ Desktop Environment Support
 
-| Feature | KDE Plasma 6 | GNOME 42+ (Wayland) | Other DEs |
-|---------|:---:|:---:|:---:|
-| Button remapping | ✅ | ✅ | ✅ |
-| Media controls | ✅ | ✅ | ✅ |
-| DPI / SmartShift / Scroll | ✅ | ✅ | ✅ |
-| Thumb wheel modes | ✅ | ✅ | ✅ |
-| Gesture actions | ✅ | ✅ | ✅ |
-| Per-app profiles | ✅ | ✅ | ❌ |
-| Auto profile switching | ✅ | ✅ | ❌ |
-| Block shortcuts during capture | ✅ | ✅ | ❌ |
-| System tray | ✅ | ✅ | ✅ |
+| Feature | KDE Plasma 6 | GNOME 42+ (Wayland) | Hyprland | Other DEs |
+|---------|:---:|:---:|:---:|:---:|
+| Button remapping | ✅ | ✅ | ✅ | ✅ |
+| Media controls | ✅ | ✅ | ✅ | ✅ |
+| DPI / SmartShift / Scroll | ✅ | ✅ | ✅ | ✅ |
+| Thumb wheel modes | ✅ | ✅ | ✅ | ✅ |
+| Gesture actions | ✅ | ✅ | ✅ | ✅ |
+| Per-app profiles | ✅ | ✅ | ✅ | ❌ |
+| Auto profile switching | ✅ | ✅ | ✅ | ❌ |
+| Block shortcuts during capture | ✅ | ✅ | ❌ | ❌ |
+| System tray | ✅ | ✅ | ✅ | ✅ |
 
-> **Note:** All device configuration (buttons, DPI, scroll, gestures, thumb wheel) works on every DE — it's pure HID++ over hidraw. Per-app profile switching requires desktop-specific focus tracking. KDE uses a KWin script, GNOME uses a Shell extension (auto-installed on first run). See [Adding a Desktop Environment](https://github.com/mmaher88/logitune/wiki/Adding-a-Desktop-Environment) to contribute support for other DEs.
+> **Note:** All device configuration (buttons, DPI, scroll, gestures, thumb wheel) works on every DE — it's pure HID++ over hidraw. Per-app profile switching requires desktop-specific focus tracking. KDE uses a KWin script, GNOME uses a Shell extension (auto-installed on first run), and Hyprland subscribes to the compositor's event socket. Hyprland has no stable compositor-wide shortcut-blocking API, so global bindings may still fire while capturing a keystroke — capture itself works. See [Adding a Desktop Environment](https://github.com/mmaher88/logitune/wiki/Adding-a-Desktop-Environment) to contribute support for other DEs.
 
 ## 🛠️ Tech Stack
 

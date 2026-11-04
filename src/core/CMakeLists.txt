@@ -8,7 +8,7 @@ target_sources(logitune-core PRIVATE
     hidpp/HidrawDevice.cpp
     hidpp/Transport.cpp
     hidpp/FeatureDispatcher.cpp
-    hidpp/CommandQueue.cpp
+    hidpp/CommandProcessor.cpp
     hidpp/features/SmartShift.cpp
     hidpp/features/HiResWheel.cpp
     hidpp/features/ThumbWheel.cpp
@@ -25,17 +25,27 @@ target_sources(logitune-core PRIVATE
     DeviceRegistry.cpp
     devices/DescriptorWriter.cpp
     devices/JsonDevice.cpp
+    actions/ActionPreset.cpp
+    actions/ActionPresetRegistry.cpp
     interfaces/IDesktopIntegration.cpp
     interfaces/IInputInjector.cpp
     interfaces/ITransport.cpp
     desktop/LinuxDesktopBase.cpp
     desktop/GnomeDesktop.cpp
+    desktop/HyprlandDesktop.cpp
     desktop/KDeDesktop.cpp
     desktop/GenericDesktop.cpp
     input/UinputInjector.cpp
     logging/LogManager.cpp
     logging/CrashHandler.cpp
     DeviceFetcher.cpp
+    DistroDetector.cpp
+)
+
+qt_add_resources(logitune-core "action-presets"
+    PREFIX "/logitune"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/actions"
+    FILES actions/actions.json
 )
 
 target_include_directories(logitune-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

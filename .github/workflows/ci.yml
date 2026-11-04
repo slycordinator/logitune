@@ -47,7 +47,7 @@ jobs:
               qml6-module-qtquick qml6-module-qtquick-controls
               qml6-module-qtquick-layouts qml6-module-qtquick-window
               qml6-module-qtquick-templates qml6-module-qtqml-workerscript
-              qml6-module-qtquick-dialogs qml6-module-qt5compat-graphicaleffects
+              qml6-module-qtquick-dialogs
               qt6-qpa-plugins libqt6opengl6-dev libqt6svg6-dev
               libxkbcommon-dev qml6-module-qttest
               libudev-dev libgtest-dev
@@ -68,6 +68,10 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need full history + tags so CMakeLists.txt's git-describe path
+          # can resolve LOGITUNE_VERSION. Without this, configure fails.
+          fetch-depth: 0
 
       # Ubuntu ships gtest as source-only (libgtest-dev); we compile and
       # install it ourselves. Cache the installed artifacts so subsequent
@@ -92,7 +96,10 @@ jobs:
         run: cd /usr/src/googletest && cmake -B build && cmake --build build && cmake --install build
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=${{ matrix.run_tests && 'ON' || 'OFF' }} -Wno-dev
+        # CI builds aren't shipped; a static version string is fine. This
+        # also sidesteps git-describe inside container volumes where
+        # safe.directory can refuse to trust the mounted work tree.
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=${{ matrix.run_tests && 'ON' || 'OFF' }} -DLOGITUNE_VERSION=0.0.0+ci -Wno-dev
 
       - name: Build
         run: cmake --build build -j"$(nproc)"
@@ -146,13 +153,38 @@ jobs:
           echo "All expected files present."
 
   # --------------------------------------------------------------------------
-  # Job 2: Debian package
+  # Job 2: README device table must match devices/*/descriptor.json.
+  # Ensures the published table never drifts from the descriptors; new
+  # devices land in the same PR as the README update.
+  # --------------------------------------------------------------------------
+  devices-table-check:
+    name: README devices table
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pytest
+        run: sudo apt-get update -qq && sudo apt-get install -y python3-pytest
+
+      - name: Verify README.md table matches descriptors
+        run: python3 scripts/generate-readme-devices.py --check
+
+      - name: Verify Debian package deps match QML imports
+        run: python3 scripts/generate_package_deps.py --check
+
+      - name: Verify package-deps generator tests
+        run: cd scripts && python3 -m pytest ../tests/scripts/test_package_deps.py -q
+
+  # --------------------------------------------------------------------------
+  # Job 3: Debian package
   # --------------------------------------------------------------------------
   deb-pkg:
     name: Debian Package
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Route apt's .deb cache into a user-owned directory so actions/cache
       # can both read it on save and extract into it on restore. Caching
@@ -175,7 +207,7 @@ jobs:
             qml6-module-qtquick qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
             qml6-module-qtquick-templates qml6-module-qtqml-workerscript \
-            qml6-module-qtquick-dialogs qml6-module-qt5compat-graphicaleffects \
+            qml6-module-qtquick-dialogs \
             qt6-qpa-plugins libqt6opengl6-dev libqt6svg6-dev \
             libxkbcommon-dev libudev-dev
           # Ensure the cache dir is owned by the runner user before save.
@@ -201,15 +233,17 @@ jobs:
     name: CI Summary
     if: always()
     runs-on: ubuntu-latest
-    needs: [build, deb-pkg]
+    needs: [build, deb-pkg, devices-table-check]
     steps:
       - name: Check all jobs passed
         run: |
-          echo "Build:  ${{ needs.build.result }}"
-          echo "Deb:    ${{ needs.deb-pkg.result }}"
+          echo "Build:                ${{ needs.build.result }}"
+          echo "Deb:                  ${{ needs.deb-pkg.result }}"
+          echo "Devices table check:  ${{ needs.devices-table-check.result }}"
 
           if [ "${{ needs.build.result }}" != "success" ] || \
-             [ "${{ needs.deb-pkg.result }}" != "success" ]; then
+             [ "${{ needs.deb-pkg.result }}" != "success" ] || \
+             [ "${{ needs.devices-table-check.result }}" != "success" ]; then
             echo ""
             echo "One or more jobs failed."
             exit 1

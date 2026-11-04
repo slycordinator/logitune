@@ -54,6 +54,21 @@ static const DeviceSpec kDevices[] = {
         .gestureUpType = ButtonAction::Default,
     },
     {
+        .pid = 0xc52b,
+        .name = "MX Master 3",
+        .minDpi = 200, .maxDpi = 4000, .dpiStep = 50,
+        .buttonHotspots = 6, .scrollHotspots = 3,
+        .minControls = 7,
+        .control0Cid = 0x0050, .control5Cid = 0x00C3,
+        .control5ActionType = "gesture-trigger",
+        .control6ActionType = "smartshift-toggle",
+        .battery = true, .adjustableDpi = true, .smartShift = true,
+        .reprogControls = true, .gestureV2 = false,
+        .gestureDownType = ButtonAction::Keystroke,
+        .gestureDownPayload = "Super+D",
+        .gestureUpType = ButtonAction::Default,
+    },
+    {
         .pid = 0xb042,
         .name = "MX Master 4",
         .minDpi = 200, .maxDpi = 8000, .dpiStep = 50,
@@ -292,9 +307,85 @@ TEST(DeviceRegistry, MxVerticalForBusinessRegistered) {
     EXPECT_EQ(ring[3], 4000);
 }
 
+// MX Vertical's DPI button (CID 0x00C3) is firmware-locked — SetControlReporting
+// is accepted by the device but the firmware still fires the native DPI cycle
+// without emitting a divert event. Mark the descriptor entry as non-configurable
+// so the UI shows the button as informational rather than offering a remap that
+// silently fails. Loaded via JsonDevice::load against the source tree so the
+// assertion tracks the descriptor regardless of whatever is installed at the
+// system path.
+TEST(DeviceRegistry, MxVerticalDpiButtonIsNotConfigurable) {
+    for (const char *slug : {"mx-vertical", "mx-vertical-for-business"}) {
+        const QString dir = QStringLiteral(SOURCE_ROOT "/devices/") + slug;
+        auto dev = logitune::JsonDevice::load(dir);
+        ASSERT_NE(dev, nullptr) << slug;
+        ASSERT_EQ(dev->controls().size(), 6u) << slug;
+        EXPECT_EQ(dev->controls()[5].controlId, 0x00C3) << slug;
+        EXPECT_FALSE(dev->controls()[5].configurable) << slug;
+    }
+}
+
 TEST(DeviceRegistry, MxMaster3sHasNoDpiCycleRing) {
     logitune::DeviceRegistry reg;
     const auto *dev = reg.findByName(QStringLiteral("MX Master 3S"));
     ASSERT_NE(dev, nullptr);
     EXPECT_TRUE(dev->dpiCycleRing().empty());
+}
+
+// Every devices/*/descriptor.json must have a matching entry in kDevices[]
+// above so the parameterized suite actually validates the new descriptor.
+// Without this check, a new descriptor can be added (hardware PID, controls,
+// hotspots, gestures...) with zero test coverage — issues only surface at
+// runtime for an end user. Inverse check catches kDevices entries that no
+// longer correspond to a descriptor on disk (e.g. after a rename).
+TEST(DeviceRegistry, EveryDescriptorHasSpecCoverage) {
+    // Descriptors that share a PID with another entry can't be parameterized
+    // via kDevices because DeviceRegistry::findByPid returns the first-loaded
+    // match, so the FindsByPid assertion on the shared-PID variant would flap.
+    // They're covered by dedicated tests instead
+    // (MxVerticalDpiButtonIsNotConfigurable iterates both MX Vertical variants).
+    static const QSet<QString> kPidCollisionExemptions = {
+        QStringLiteral("MX Vertical for Business"),
+    };
+
+    QSet<QString> specNames;
+    for (const auto &s : kDevices) {
+        specNames.insert(QString::fromUtf8(s.name));
+    }
+    specNames.unite(kPidCollisionExemptions);
+
+    QSet<QString> descriptorNames;
+    const QDir devicesDir(QStringLiteral(SOURCE_ROOT "/devices"));
+    ASSERT_TRUE(devicesDir.exists()) << "devices/ dir not found at " << devicesDir.path().toStdString();
+    const auto slugs = devicesDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &slug : slugs) {
+        const QString descPath = devicesDir.filePath(slug) + QStringLiteral("/descriptor.json");
+        if (!QFile::exists(descPath))
+            continue;
+        auto dev = logitune::JsonDevice::load(devicesDir.filePath(slug));
+        ASSERT_NE(dev, nullptr) << slug.toStdString();
+        descriptorNames.insert(dev->deviceName());
+    }
+
+    // Descriptors on disk with no DeviceSpec entry.
+    const QSet<QString> uncovered = descriptorNames - specNames;
+    if (!uncovered.isEmpty()) {
+        QStringList sorted = uncovered.values();
+        std::sort(sorted.begin(), sorted.end());
+        ADD_FAILURE() << "Descriptors missing a DeviceSpec entry in kDevices[]:\n"
+                      << "  " << sorted.join(QStringLiteral(", ")).toStdString() << "\n"
+                      << "  Add matching entries to tests/test_device_registry.cpp "
+                         "(kDevices[] near the top of the file).";
+    }
+
+    // DeviceSpec entries with no descriptor on disk (stale test data).
+    const QSet<QString> orphaned = specNames - descriptorNames;
+    if (!orphaned.isEmpty()) {
+        QStringList sorted = orphaned.values();
+        std::sort(sorted.begin(), sorted.end());
+        ADD_FAILURE() << "kDevices[] has entries with no descriptor on disk:\n"
+                      << "  " << sorted.join(QStringLiteral(", ")).toStdString() << "\n"
+                      << "  Remove them from tests/test_device_registry.cpp or "
+                         "restore the missing devices/<slug>/descriptor.json.";
+    }
 }

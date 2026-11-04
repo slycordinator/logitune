@@ -1,4 +1,5 @@
 #pragma once
+#include "ButtonAction.h"
 #include <QAbstractListModel>
 #include <QObject>
 #include <qqmlintegration.h>
@@ -10,6 +11,7 @@ struct ActionEntry {
     QString description;
     QString actionType;
     QString payload;  // e.g. "Ctrl+C" for keystroke, "" for default
+    QString category;
 };
 
 class ActionModel : public QAbstractListModel {
@@ -23,6 +25,7 @@ public:
         DescriptionRole,
         ActionTypeRole,
         PayloadRole,
+        CategoryRole,
     };
 
     explicit ActionModel(QObject *parent = nullptr);
@@ -36,6 +39,14 @@ public:
 
     Q_INVOKABLE int indexForName(const QString &name) const;
     Q_INVOKABLE QString payloadForName(const QString &name) const;
+
+    /// Translate a ButtonAction (domain type) to the (typeName, displayName)
+    /// pair the UI uses. Inverse of buttonEntryToAction.
+    QString buttonActionToName(const ButtonAction &ba) const;
+
+    /// Translate the UI's (typeName, displayName) pair back to a ButtonAction.
+    /// Inverse of buttonActionToName.
+    ButtonAction buttonEntryToAction(const QString &actionType, const QString &actionName) const;
 
 signals:
     void selectedIndexChanged();

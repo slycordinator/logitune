@@ -14,6 +14,8 @@ public:
     virtual bool available() const = 0;
     virtual QString desktopName() const = 0;
     virtual QStringList detectedCompositors() const = 0;
+    virtual QString variantKey() const = 0;
+    virtual std::optional<ButtonAction> resolveNamedAction(const QString &id) const = 0;
     virtual void blockGlobalShortcuts(bool block) = 0;
     virtual QVariantList runningApplications() const = 0;
 
@@ -26,10 +28,12 @@ signals:
 
 | Method | Purpose | When Called |
 |--------|---------|------------|
-| `start()` | Initialize focus tracking (install scripts, connect signals, start polling) | Once, after AppController::init() |
+| `start()` | Initialize focus tracking (install scripts, connect signals, start polling) | Once, after AppRoot::init() |
 | `available()` | Return true if this DE is detected and usable | Checked before relying on DE features |
 | `desktopName()` | Human-readable name (e.g., "KDE", "GNOME") | Logging and UI |
 | `detectedCompositors()` | List of detected compositor names | Diagnostics |
+| `variantKey()` | Short string key matching a top-level key under `variants` in `actions.json` (e.g. `"kde"`, `"gnome"`, `"hyprland"`, `"generic"`). | Read by `ActionFilterModel` per row, by `ActionPresetRegistry::supportedBy` queries. |
+| `resolveNamedAction(id)` | Turn a semantic preset id into a concrete `ButtonAction`, or `nullopt` if this DE cannot resolve it. | Called by `ButtonActionDispatcher` on every button press with a `PresetRef` action, and by `ActionFilterModel` at filter time to grey out presets whose live binding is empty. |
 | `blockGlobalShortcuts(bool)` | Temporarily disable global shortcuts during keystroke capture | During KeystrokeCapture QML component |
 | `runningApplications()` | Return list of installed GUI applications | App profile picker dialog |
 
@@ -96,48 +100,45 @@ private:
 
 ### Step 2: Implement focus tracking
 
-Create `src/core/desktop/GnomeDesktop.cpp`:
+> **Note — GNOME Wayland only.** The shipped `GnomeDesktop` refuses to start on X11 sessions (`XDG_SESSION_TYPE != "wayland"`). The pattern below assumes Wayland; if you want X11 support, fall back to the `GenericDesktop` polling loop.
+
+The real `GnomeDesktop` uses an event-driven approach: a small GNOME Shell extension watches `global.display::notify::focus-window` and calls back into the app via D-Bus. No polling. The app auto-installs and enables the extension on first run, then registers `com.logitune.app` / `/FocusWatcher` on the session bus for the extension to call.
+
+Key pieces (all already in-tree):
+
+- **`src/core/desktop/GnomeDesktop.{h,cpp}`** — the C++ integration class. See `GnomeDesktop::start()` for session-type check, `ensureExtensionInstalled()` for the install flow (system dir → user dir copy), `detectAppIndicatorStatus()` for tray-icon support detection via `org.kde.StatusNotifierWatcher`.
+- **`data/gnome-extension/`** — the Shell extension source, with v42 and v45 variants for the two GNOME Shell extension API generations.
+
+Create `src/core/desktop/<DE>Desktop.cpp` using the same shape:
 
 ```cpp
-#include "desktop/GnomeDesktop.h"
+#include "desktop/<DE>Desktop.h"
 #include "logging/LogManager.h"
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusMessage>
-#include <QDBusReply>
 #include <QProcessEnvironment>
-#include <QDir>
-#include <QFileInfo>
-#include <QSettings>
 
 namespace logitune {
 
-GnomeDesktop::GnomeDesktop(QObject *parent)
-    : IDesktopIntegration(parent)
+<DE>Desktop::<DE>Desktop(QObject *parent)
+    : LinuxDesktopBase(parent)
 {
 }
 
-void GnomeDesktop::start()
+void <DE>Desktop::start()
 {
-    // Check if GNOME Shell is running
-    QDBusInterface shell(
-        QStringLiteral("org.gnome.Shell"),
-        QStringLiteral("/org/gnome/Shell"),
-        QStringLiteral("org.gnome.Shell"),
-        QDBusConnection::sessionBus());
-
-    m_available = shell.isValid();
-    if (!m_available) return;
-
-    // GNOME Shell Extension approach:
-    // Install a GNOME Shell extension that sends D-Bus signals on focus change.
-    // Alternatively, use the GNOME Shell Eval API (deprecated) or
-    // the org.gnome.Shell.Introspect API for window tracking.
-
-    // For now, use polling via org.gnome.Shell.Introspect
-    m_pollTimer = new QTimer(this);
-    m_pollTimer->setInterval(500);
-    connect(m_pollTimer, &QTimer::timeout, this, &GnomeDesktop::pollActiveWindow);
-    m_pollTimer->start();
+    // 1. Sanity-check the session — bail if this DE isn't actually running
+    //    or if the session type is wrong for your focus API.
+    // 2. If you need a Shell extension / KWin script / wlr protocol,
+    //    install or activate it here.
+    // 3. Register your D-Bus callback so the DE-side agent can call
+    //    back into the app with focus events. focusChanged() is
+    //    inherited from LinuxDesktopBase and does the desktop-file
+    //    resolution + duplicate suppression.
+    //
+    // See GnomeDesktop::start() for a complete worked example.
+    m_available = true;
 }
 
 bool GnomeDesktop::available() const
@@ -160,54 +161,21 @@ QStringList GnomeDesktop::detectedCompositors() const
     return compositors;
 }
 
-void GnomeDesktop::pollActiveWindow()
+// focusChanged() is the D-Bus entry point the DE-side agent calls.
+// LinuxDesktopBase provides resolveDesktopFile() + duplicate-event
+// suppression, so subclasses only implement the DE-specific glue.
+void <DE>Desktop::focusChanged(const QString &appId, const QString &title)
 {
-    // Option 1: org.gnome.Shell.Introspect.GetWindows
-    // Option 2: GNOME Shell extension with D-Bus callback
-    // Option 3: wlr-foreign-toplevel-management (wlroots-based compositors)
-
-    // This is the scaffold — the actual implementation depends on
-    // which GNOME API is available and stable.
-
-    // Example using Shell.Introspect:
-    QDBusMessage msg = QDBusMessage::createMethodCall(
-        QStringLiteral("org.gnome.Shell"),
-        QStringLiteral("/org/gnome/Shell/Introspect"),
-        QStringLiteral("org.gnome.Shell.Introspect"),
-        QStringLiteral("GetWindows"));
-
-    QDBusReply<QVariantMap> reply = QDBusConnection::sessionBus().call(msg);
-    if (!reply.isValid()) return;
-
-    // Find the focused window and extract its app-id
-    // ... parse reply.value() ...
-
-    // QString appId = ...;
-    // if (appId != m_lastAppId) {
-    //     m_lastAppId = appId;
-    //     emit activeWindowChanged(appId, title);
-    // }
+    QString resolved = appId;
+    if (!appId.contains('.'))
+        resolved = resolveDesktopFile(appId);
+    if (resolved == m_lastAppId) return;
+    m_lastAppId = resolved;
+    emit activeWindowChanged(resolved, title);
 }
 
-void GnomeDesktop::blockGlobalShortcuts(bool block)
-{
-    // GNOME doesn't have a direct D-Bus API for this.
-    // Options:
-    // 1. Use a GNOME Shell extension
-    // 2. Temporarily grab the keyboard via libinput
-    // 3. Leave unimplemented (keystroke capture will work but may trigger shortcuts)
-    Q_UNUSED(block)
-}
-
-QVariantList GnomeDesktop::runningApplications() const
-{
-    // Same approach as KDeDesktop — scan .desktop files
-    // The KDeDesktop implementation is desktop-agnostic for this method
-    // Consider extracting it to a shared utility
-    QVariantList result;
-    // ... scan /usr/share/applications/*.desktop ...
-    return result;
-}
+// runningApplications() is inherited from LinuxDesktopBase — do not
+// reimplement unless your DE has a faster dedicated API.
 
 } // namespace logitune
 ```
@@ -263,21 +231,21 @@ The trickiest part of desktop integration is resolving a window to a stable appl
 | Hyprland | `class` | `firefox` |
 | X11 | `WM_CLASS` (instance, class) | `Navigator`, `firefox` |
 
-Logitune normalizes all of these to a `.desktop` file baseName. The `resolveDesktopFile()` method in `KDeDesktop` does this by:
+Logitune normalizes all of these to a `.desktop` file baseName. The `resolveDesktopFile()` method on `LinuxDesktopBase` (inherited by both `KDeDesktop` and `GnomeDesktop`) does this by:
 
 1. Checking `desktopFileName` if the compositor provides it directly
 2. Searching `.desktop` files for a matching filename component
 3. Searching `.desktop` files for a matching `StartupWMClass`
 4. Falling back to the raw identifier
 
-This logic is currently in `KDeDesktop` but is DE-agnostic. Consider extracting it to a shared utility if adding multiple DEs.
+This logic lives in `LinuxDesktopBase` so every Linux DE implementation inherits it for free — `runningApplications()` and `desktopDirs()` are in the same base class.
 
-### Step 5: Register in AppController
+### Step 5: Register in AppRoot
 
-Edit `src/app/AppController.cpp` to select the right desktop integration:
+Edit `src/app/AppRoot.cpp` to select the right desktop integration:
 
 ```cpp
-AppController::AppController(IDesktopIntegration *desktop, IInputInjector *injector, QObject *parent)
+AppRoot::AppRoot(IDesktopIntegration *desktop, IInputInjector *injector, QObject *parent)
     : QObject(parent)
     , m_deviceManager(&m_registry)
     , m_actionExecutor(nullptr)
@@ -327,6 +295,67 @@ TEST(DesktopDetectionTest, GnomeDetected) {
 }
 ```
 
+## Preset Resolution
+
+Logitune's action picker includes DE-specific semantic presets (Show desktop, Task switcher, Switch desktop left/right, Screenshot, Close window, Calculator). Each preset is resolved to a concrete keystroke, DBus call, or app launch by the active `IDesktopIntegration` impl.
+
+A new DE impl needs to implement two virtuals:
+
+### variantKey()
+
+Return a short, lowercase string that matches a top-level key in `src/core/actions/actions.json`'s `variants` map. Existing keys: `"kde"`, `"gnome"`, `"generic"`. For a new DE, pick a distinctive key and add matching entries to each preset's `variants` object in `actions.json`. The key does not need to match `desktopName()`.
+
+### resolveNamedAction(id)
+
+Return `std::optional<ButtonAction>`:
+- `std::nullopt` - "this DE cannot resolve this preset right now". The action picker hides the row; at fire time the dispatcher logs and does nothing.
+- A populated `ButtonAction` - a concrete `Keystroke`, `DBus`, `AppLaunch`, or `Media` action the executor can fire.
+
+The DE impl gets a non-owning pointer to `ActionPresetRegistry` via `setPresetRegistry()` (called once by `AppRoot` at composition time). At resolve time, read `m_registry->variantData(id, variantKey())` to get the hint JSON, branch on the hint kind, and build the concrete `ButtonAction`.
+
+### Example: KDE
+
+KDE's `kglobalaccel` lets callers invoke actions by name over DBus regardless of what keystroke the user has bound. So the KDE impl packs the component + action name into a 5-field DBus payload and returns a `ButtonAction{DBus, ...}`:
+
+```cpp
+std::optional<ButtonAction> KDeDesktop::resolveNamedAction(const QString &id) const
+{
+    if (!m_registry) return std::nullopt;
+    const QJsonObject variant = m_registry->variantData(id, QStringLiteral("kde"));
+    if (variant.isEmpty()) return std::nullopt;
+
+    if (variant.contains(QStringLiteral("kglobalaccel"))) {
+        const QJsonObject spec = variant.value(QStringLiteral("kglobalaccel")).toObject();
+        const QString component = spec.value(QStringLiteral("component")).toString();
+        const QString name = spec.value(QStringLiteral("name")).toString();
+        if (component.isEmpty() || name.isEmpty()) return std::nullopt;
+
+        const QString payload =
+            QStringLiteral("org.kde.kglobalaccel,/component/") + component +
+            QStringLiteral(",org.kde.kglobalaccel.Component,invokeShortcut,") + name;
+        return ButtonAction{ButtonAction::DBus, payload};
+    }
+    // ... app-launch branch
+    return std::nullopt;
+}
+```
+
+### Example: GNOME
+
+GNOME has no binding-independent invoker for most actions, so the GNOME impl reads the user's current binding from `gsettings`, translates the GLib variant output (`['<Super>d']`) into Logitune keystroke format (`Super+d`), and returns `ButtonAction{Keystroke, ...}`. Empty binding returns `nullopt`. Uses an injectable `std::function` reader for tests so unit tests do not fork QProcess.
+
+### Example: Hyprland / Sway / i3
+
+Hyprland support uses IPC for focus tracking and live bind inspection for presets. The C++ integration listens to Hyprland's event socket for `activewindow` events and queries `j/binds` from the command socket when resolving supported semantic presets. A preset only appears when a matching keyboard bind exists in the default submap; unsupported or unbound presets return `nullopt`.
+
+### If your DE does not support some presets
+
+Leave its variant out of those entries in `actions.json`. `ActionPresetRegistry::supportedBy(id, variantKey)` then returns false and the action picker hides the row on your DE. Users on your DE simply do not see presets that cannot work there.
+
+### Generic fallback
+
+`GenericDesktop::resolveNamedAction` returns `std::nullopt` for every id. No preset has a `"generic"` variant today, because every semantic action in scope needs a DE-native invoker to be reliable. Media keys / alt+tab / XF86 keysyms are handled as raw `Keystroke` actions in the existing catalog, not as presets.
+
 ### Extracting Shared Utilities
 
 If you are adding a second DE implementation, consider extracting these shared utilities:
@@ -341,10 +370,11 @@ These could live in a `DesktopUtils` static class or be moved to the `GenericDes
 
 Hyprland is a wlroots-based compositor with a powerful IPC system. Here is a brief outline:
 
-1. **Class**: `HyprlandDesktop` extending `IDesktopIntegration`
+1. **Class**: `HyprlandDesktop` extending `LinuxDesktopBase`
 2. **Focus tracking**: Subscribe to Hyprland IPC socket (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`) for `activewindow>>` events
 3. **Window identity**: Hyprland reports the `class` property, equivalent to X11 `WM_CLASS`. Run through `resolveDesktopFile()`.
-4. **blockGlobalShortcuts**: Use `hyprctl keyword bind` to temporarily unbind all shortcuts, or use `hyprctl dispatch submap` to switch to an empty submap
-5. **Detection**: Check for `HYPRLAND_INSTANCE_SIGNATURE` environment variable
+4. **Preset resolution**: Query `j/binds` from the Hyprland command socket and map matching keyboard binds to Logitune `Keystroke` payloads.
+5. **blockGlobalShortcuts**: Leave as a no-op unless Hyprland gains a stable compositor-wide shortcut-block API.
+6. **Detection**: Check `XDG_CURRENT_DESKTOP` for `Hyprland` or `HYPRLAND_INSTANCE_SIGNATURE`.
 
-The Hyprland IPC approach would be event-driven (no polling), making it more efficient than the GNOME polling fallback.
+The Hyprland IPC approach is event-driven (no polling), making focus tracking efficient and low latency.

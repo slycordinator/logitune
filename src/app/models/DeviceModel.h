@@ -1,4 +1,5 @@
 #pragma once
+#include "ButtonAction.h"
 #include "DeviceSession.h"
 #include "PhysicalDevice.h"
 #include "interfaces/IDesktopIntegration.h"
@@ -10,6 +11,14 @@
 #include <qqmlintegration.h>
 
 namespace logitune {
+
+/// Per-direction gesture binding stored on DeviceModel. The display name is
+/// kept alongside the action so the QML layer can render the assigned label
+/// without re-deriving it from the ActionModel on every read.
+struct GestureEntry {
+    QString name;          // display name like "Show desktop"
+    ButtonAction action;   // full action with type
+};
 
 class DeviceModel : public QAbstractListModel {
     Q_OBJECT
@@ -26,14 +35,14 @@ class DeviceModel : public QAbstractListModel {
     Q_PROPERTY(bool batteryCharging READ batteryCharging NOTIFY selectedBatteryChanged)
     Q_PROPERTY(QString batteryStatusText READ batteryStatusText NOTIFY selectedBatteryChanged)
     Q_PROPERTY(QString connectionType READ connectionType NOTIFY selectedChanged)
-    Q_PROPERTY(int currentDPI READ currentDPI NOTIFY settingsReloaded)
+    Q_PROPERTY(int currentDPI READ currentDPI NOTIFY currentDPIChanged)
     Q_PROPERTY(int minDPI READ minDPI NOTIFY selectedChanged)
     Q_PROPERTY(int maxDPI READ maxDPI NOTIFY selectedChanged)
     Q_PROPERTY(int dpiStep READ dpiStep NOTIFY selectedChanged)
-    Q_PROPERTY(bool smartShiftEnabled READ smartShiftEnabled NOTIFY settingsReloaded)
-    Q_PROPERTY(int smartShiftThreshold READ smartShiftThreshold NOTIFY settingsReloaded)
-    Q_PROPERTY(bool scrollHiRes READ scrollHiRes NOTIFY settingsReloaded)
-    Q_PROPERTY(bool scrollInvert READ scrollInvert NOTIFY settingsReloaded)
+    Q_PROPERTY(bool smartShiftEnabled READ smartShiftEnabled NOTIFY smartShiftEnabledChanged)
+    Q_PROPERTY(int smartShiftThreshold READ smartShiftThreshold NOTIFY smartShiftThresholdChanged)
+    Q_PROPERTY(bool scrollHiRes READ scrollHiRes NOTIFY scrollConfigChanged)
+    Q_PROPERTY(bool scrollInvert READ scrollInvert NOTIFY scrollConfigChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY activeProfileNameChanged)
     Q_PROPERTY(QString activeWmClass READ activeWmClass NOTIFY activeWmClassChanged)
 
@@ -47,12 +56,14 @@ class DeviceModel : public QAbstractListModel {
     Q_PROPERTY(bool smoothScrollSupported READ smoothScrollSupported NOTIFY selectedChanged)
     Q_PROPERTY(bool thumbWheelSupported READ thumbWheelSupported NOTIFY selectedChanged)
     Q_PROPERTY(bool smartShiftSupported READ smartShiftSupported NOTIFY selectedChanged)
+    Q_PROPERTY(bool adjustableDpiSupported READ adjustableDpiSupported NOTIFY selectedChanged)
+    Q_PROPERTY(bool reprogControlsSupported READ reprogControlsSupported NOTIFY selectedChanged)
     Q_PROPERTY(QString deviceSerial READ deviceSerial NOTIFY selectedChanged)
     Q_PROPERTY(QString firmwareVersion READ firmwareVersion NOTIFY selectedChanged)
     Q_PROPERTY(int activeSlot READ activeSlot NOTIFY selectedChanged)
     Q_PROPERTY(QString deviceStatus READ deviceStatus NOTIFY selectedChanged)
-    Q_PROPERTY(QString thumbWheelMode READ thumbWheelMode NOTIFY settingsReloaded)
-    Q_PROPERTY(bool thumbWheelInvert READ thumbWheelInvert NOTIFY settingsReloaded)
+    Q_PROPERTY(QString thumbWheelMode READ thumbWheelMode NOTIFY thumbWheelModeChanged)
+    Q_PROPERTY(bool thumbWheelInvert READ thumbWheelInvert NOTIFY thumbWheelModeChanged)
 
 public:
     enum Roles {
@@ -121,6 +132,8 @@ public:
     bool smoothScrollSupported() const;
     bool thumbWheelSupported() const;
     bool smartShiftSupported() const;
+    bool adjustableDpiSupported() const;
+    bool reprogControlsSupported() const;
     QString deviceSerial() const;
     QString firmwareVersion() const;
     int activeSlot() const;
@@ -132,17 +145,26 @@ public:
     Q_INVOKABLE void setScrollConfig(bool hiRes, bool invert);
     Q_INVOKABLE void setThumbWheelMode(const QString &mode);
     Q_INVOKABLE void resetAllProfiles();
-    Q_INVOKABLE void setGestureAction(const QString &direction, const QString &actionName, const QString &keystroke);
+    Q_INVOKABLE void setGestureAction(const QString &direction,
+                                      const QString &actionName,
+                                      const QString &actionType,
+                                      const QString &payload);
     Q_INVOKABLE QString gestureActionName(const QString &direction) const;
-    Q_INVOKABLE QString gestureKeystroke(const QString &direction) const;
+    Q_INVOKABLE QString gestureActionType(const QString &direction) const;
+    Q_INVOKABLE QString gestureActionPayload(const QString &direction) const;
+    /// Non-Q_INVOKABLE accessor used by ProfileOrchestrator on save: returns
+    /// the full ButtonAction for the given direction, or {Default, {}} if
+    /// none is bound.
+    ButtonAction gestureAction(const QString &direction) const;
     bool scrollHiRes() const;
     bool scrollInvert() const;
     QString thumbWheelMode() const;
     bool thumbWheelInvert() const;
     Q_INVOKABLE void setThumbWheelInvert(bool invert);
     Q_INVOKABLE QString gnomeTrayStatus() const;
+    Q_INVOKABLE QString appIndicatorInstallCommand() const;
 
-    void loadGesturesFromProfile(const QMap<QString, QPair<QString, QString>> &gestures);
+    void loadGesturesFromProfile(const QMap<QString, GestureEntry> &gestures);
     void setActiveProfileName(const QString &name);
     void setActiveWmClass(const QString &wmClass);
     void setDisplayValues(int dpi, bool smartShiftEnabled, int smartShiftThreshold,
@@ -174,7 +196,10 @@ signals:
     void activeProfileNameChanged();
     void activeWmClassChanged();
     void gestureChanged();
-    void userGestureChanged(const QString &direction, const QString &actionName, const QString &keystroke);
+    void userGestureChanged(const QString &direction,
+                            const QString &actionName,
+                            const QString &actionType,
+                            const QString &payload);
     void dpiChangeRequested(int value);
     void smartShiftChangeRequested(bool enabled, int threshold);
     void scrollConfigChangeRequested(bool hiRes, bool invert);
@@ -198,7 +223,7 @@ private:
     int m_selectedIndex = -1;
 
     IDesktopIntegration *m_desktop = nullptr;
-    QMap<QString, QPair<QString, QString>> m_gestures;
+    QMap<QString, GestureEntry> m_gestures;
     QString m_activeProfileName;
     QString m_activeWmClass;
 

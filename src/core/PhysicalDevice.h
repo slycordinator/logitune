@@ -78,7 +78,7 @@ signals:
     void stateChanged();
 
     // Fires on setupComplete from any transport (fresh enumerate or
-    // reconnect re-enumerate). AppController hooks this to re-apply
+    // reconnect re-enumerate). AppRoot hooks this to re-apply
     // the current profile after reconnects.
     void transportSetupComplete();
 
@@ -87,6 +87,15 @@ signals:
     void gestureRawXY(int16_t dx, int16_t dy);
     void divertedButtonPressed(uint16_t controlId, bool pressed);
     void thumbWheelRotation(int delta);
+
+    // Per-property relay signals. Mirror DeviceSession's per-field change
+    // signals so QML bindings on specific Q_PROPERTYs can refresh without
+    // waiting on the catch-all stateChanged. DeviceModel subscribes to
+    // these to drive targeted dataChanged roles.
+    void smartShiftChanged(bool enabled, int threshold);
+    void scrollConfigChanged();
+    void thumbWheelModeChanged();
+    void currentDPIChanged();
 
 private:
     void promoteBest();

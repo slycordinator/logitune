@@ -33,7 +33,9 @@ Item {
 
     signal clicked()
 
-    visible: root.configurable
+    // Non-configurable hotspots (firmware-locked buttons like MX Vertical's
+    // DPI cycle, CID 0x00C3) stay visible so the user still sees the button
+    // labeled on the mouse, but the card does not open the action picker.
 
     // ── Computed marker centre ──
     readonly property real markerCenterX: imageX + hotspotXPct * imageW
@@ -77,8 +79,8 @@ Item {
             anchors.centerIn: parent
             width: 0.22 * root.imageW
             height: 0.14 * root.imageH
-            cursorShape: Qt.PointingHandCursor
-            enabled: !markerDrag.enabled
+            cursorShape: root.configurable ? Qt.PointingHandCursor : Qt.ArrowCursor
+            enabled: !markerDrag.enabled && root.configurable
             onClicked: root.clicked()
         }
 
@@ -115,51 +117,35 @@ Item {
 
     // ══════════════════════════════════════════════════════════════════════
     // CONNECTOR LINE
+    // Rotated Rectangle rather than Canvas — the scene graph draws this in
+    // hardware and avoids a software repaint every time the marker or card
+    // moves, which happens on every frame of the ButtonsPage scale animation.
     // ══════════════════════════════════════════════════════════════════════
-    Canvas {
-        id: lineCanvas
+    Item {
+        id: connector
         anchors.fill: parent
+        visible: root.visible
 
-        onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
+        readonly property real startX: marker.x + marker.width / 2
+        readonly property real startY: marker.y + marker.height / 2
+        readonly property real endX: cardItem.x + cardItem.width / 2 < startX
+            ? cardItem.x + cardItem.width
+            : cardItem.x
+        readonly property real endY: cardItem.y + cardItem.height / 2
+        readonly property real dx: endX - startX
+        readonly property real dy: endY - startY
+        readonly property real length: Math.sqrt(dx * dx + dy * dy)
+        readonly property real angleDeg: Math.atan2(dy, dx) * 180 / Math.PI
 
-            if (!root.visible) return
-
-            var mx = marker.x + marker.width / 2
-            var my = marker.y + marker.height / 2
-
-            var cardEdgeX, cardEdgeY
-            if (cardItem.x + cardItem.width / 2 < mx) {
-                cardEdgeX = cardItem.x + cardItem.width
-            } else {
-                cardEdgeX = cardItem.x
-            }
-            cardEdgeY = cardItem.y + cardItem.height / 2
-
-            ctx.beginPath()
-            ctx.moveTo(cardEdgeX, cardEdgeY)
-            ctx.lineTo(mx, my)
-            ctx.strokeStyle = root.selected ? Theme.accent : "#BBBBBB"
-            ctx.lineWidth = 2
-            ctx.setLineDash([])
-            ctx.stroke()
-        }
-
-        Connections {
-            target: marker
-            function onXChanged() { lineCanvas.requestPaint() }
-            function onYChanged() { lineCanvas.requestPaint() }
-        }
-        Connections {
-            target: cardItem
-            function onXChanged() { lineCanvas.requestPaint() }
-            function onYChanged() { lineCanvas.requestPaint() }
-        }
-        Connections {
-            target: root
-            function onSelectedChanged() { lineCanvas.requestPaint() }
-            function onVisibleChanged() { lineCanvas.requestPaint() }
+        Rectangle {
+            x: connector.startX
+            y: connector.startY - 1
+            width: connector.length
+            height: 2
+            color: root.selected ? Theme.accent : "#BBBBBB"
+            transformOrigin: Item.TopLeft
+            rotation: connector.angleDeg
+            antialiasing: true
         }
     }
 
@@ -197,6 +183,7 @@ Item {
             color: root.selected ? Theme.accent : Theme.cardBg
             border.color: root.selected ? Theme.accentHover : Theme.cardBorder
             border.width: 1
+            opacity: root.configurable ? 1.0 : 0.65
 
             Behavior on color { ColorAnimation { duration: 150 } }
             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -218,12 +205,12 @@ Item {
                 // Physical button name (primary, bold)
                 EditableText {
                     id: nameLabel
-                    width: 156; height: 16
+                    width: 156; height: 18
                     text: root.buttonName
-                    pixelSize: 12
+                    pixelSize: 14
                     fontWeight: Font.DemiBold
                     textColor: root.selected ? Theme.activeTabText
-                        : (hoverHandler.hovered ? Theme.accent : Theme.text)
+                        : ((hoverHandler.hovered && root.configurable) ? Theme.accent : Theme.text)
                     onCommit: function(v) {
                         var ctrls = DeviceModel.controlDescriptors
                         if (!ctrls) return
@@ -239,8 +226,9 @@ Item {
                 // Action name (secondary)
                 Text {
                     text: root.actionName
-                    font.pixelSize: 10
-                    color: root.selected ? Qt.rgba(1,1,1,0.75) : "#999999"
+                    font.pixelSize: 12
+                    color: root.selected ? Qt.rgba(1,1,1,0.85)
+                        : Qt.rgba(Theme.text.r, Theme.text.g, Theme.text.b, 0.65)
                     width: Math.min(implicitWidth, 156)
                     elide: Text.ElideRight
                     Behavior on color { ColorAnimation { duration: 150 } }
@@ -251,7 +239,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 radius: cardRect.radius
-                color: hoverHandler.hovered && !root.selected
+                color: hoverHandler.hovered && !root.selected && root.configurable
                     ? Qt.rgba(0, 0, 0, 0.04) : "transparent"
                 Behavior on color { ColorAnimation { duration: 100 } }
             }
@@ -260,7 +248,8 @@ Item {
 
             MouseArea {
                 anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
+                cursorShape: root.configurable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                enabled: root.configurable
                 propagateComposedEvents: true
                 onClicked: root.clicked()
                 onDoubleClicked: function(mouse) { mouse.accepted = false }

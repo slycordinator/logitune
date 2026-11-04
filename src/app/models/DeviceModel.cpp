@@ -2,6 +2,7 @@
 #include "interfaces/IDevice.h"
 #include "devices/JsonDevice.h"
 #include "desktop/GnomeDesktop.h"
+#include "DistroDetector.h"
 #include "logging/LogManager.h"
 #include <QFile>
 #include <QJsonArray>
@@ -154,7 +155,7 @@ void DeviceModel::addPhysicalDevice(PhysicalDevice *device)
             insertRow(device);
         } else if (!now && was) {
             // connected -> disconnected: hide the row. PhysicalDevice is
-            // still alive in DeviceManager; AppController keeps per-device
+            // still alive in DeviceManager; AppRoot keeps per-device
             // state. We just don't paint a carousel card for an offline
             // mouse.
             removeRow(device);
@@ -162,6 +163,44 @@ void DeviceModel::addPhysicalDevice(PhysicalDevice *device)
             // state change while the visibility is unchanged: refresh
             refreshRow(device);
         }
+    });
+
+    // Per-property relay hooks. DeviceModel caches the last values pushed
+    // in by setDisplayValues (profile load) and short-circuits the getters
+    // to that cache whenever m_hasDisplayValues is true. If the hardware
+    // state changes out from under the cache (button press, on-device
+    // toggle, or a setter emitting optimistic echo), we must clear the
+    // cache so the next getter call falls through to the live session.
+    // Only the selected device's events should clear the cache; events
+    // from alternates are ignored.
+    connect(device, &PhysicalDevice::smartShiftChanged, this,
+            [this, device](bool, int) {
+        if (device != selectedDevice())
+            return;
+        m_hasDisplayValues = false;
+        emit smartShiftEnabledChanged();
+        emit smartShiftThresholdChanged();
+    });
+    connect(device, &PhysicalDevice::scrollConfigChanged, this,
+            [this, device]() {
+        if (device != selectedDevice())
+            return;
+        m_hasDisplayValues = false;
+        emit scrollConfigChanged();
+    });
+    connect(device, &PhysicalDevice::thumbWheelModeChanged, this,
+            [this, device]() {
+        if (device != selectedDevice())
+            return;
+        m_hasDisplayValues = false;
+        emit thumbWheelModeChanged();
+    });
+    connect(device, &PhysicalDevice::currentDPIChanged, this,
+            [this, device]() {
+        if (device != selectedDevice())
+            return;
+        m_hasDisplayValues = false;
+        emit currentDPIChanged();
     });
 
     // If the device is already connected at the time of addition, insert
@@ -614,6 +653,22 @@ bool DeviceModel::smartShiftSupported() const
     return true;
 }
 
+bool DeviceModel::adjustableDpiSupported() const
+{
+    auto *s = selectedDevice();
+    if (s && s->descriptor())
+        return s->descriptor()->features().adjustableDpi;
+    return true;
+}
+
+bool DeviceModel::reprogControlsSupported() const
+{
+    auto *s = selectedDevice();
+    if (s && s->descriptor())
+        return s->descriptor()->features().reprogControls;
+    return true;
+}
+
 QString DeviceModel::deviceSerial() const
 {
     auto *s = selectedDevice();
@@ -663,6 +718,11 @@ void DeviceModel::setDisplayValues(int dpi, bool smartShiftEnabled, int smartShi
     m_displayThumbWheelMode = thumbWheelMode;
     m_displayThumbWheelInvert = thumbWheelInvert;
     m_hasDisplayValues = true;
+    emit currentDPIChanged();
+    emit smartShiftEnabledChanged();
+    emit smartShiftThresholdChanged();
+    emit scrollConfigChanged();
+    emit thumbWheelModeChanged();
     emit settingsReloaded();
 }
 
@@ -719,14 +779,24 @@ void DeviceModel::setThumbWheelInvert(bool invert)
     emit thumbWheelInvertChangeRequested(invert);
 }
 
-void DeviceModel::setGestureAction(const QString &direction, const QString &actionName, const QString &keystroke)
+void DeviceModel::setGestureAction(const QString &direction,
+                                   const QString &actionName,
+                                   const QString &actionType,
+                                   const QString &payload)
 {
-    m_gestures[direction] = qMakePair(actionName, keystroke);
+    ButtonAction ba;
+    if (actionType == QLatin1String("preset"))
+        ba = {ButtonAction::PresetRef, payload};
+    else if (actionType == QLatin1String("keystroke") && !payload.isEmpty())
+        ba = {ButtonAction::Keystroke, payload};
+    else
+        ba = {ButtonAction::Default, {}};
+    m_gestures[direction] = GestureEntry{actionName, ba};
     emit gestureChanged();
-    emit userGestureChanged(direction, actionName, keystroke);
+    emit userGestureChanged(direction, actionName, actionType, payload);
 }
 
-void DeviceModel::loadGesturesFromProfile(const QMap<QString, QPair<QString, QString>> &gestures)
+void DeviceModel::loadGesturesFromProfile(const QMap<QString, GestureEntry> &gestures)
 {
     m_gestures = gestures;
     emit gestureChanged();
@@ -735,13 +805,32 @@ void DeviceModel::loadGesturesFromProfile(const QMap<QString, QPair<QString, QSt
 QString DeviceModel::gestureActionName(const QString &direction) const
 {
     auto it = m_gestures.find(direction);
-    return it != m_gestures.end() ? it.value().first : QString();
+    return it != m_gestures.end() ? it.value().name : QString();
 }
 
-QString DeviceModel::gestureKeystroke(const QString &direction) const
+QString DeviceModel::gestureActionType(const QString &direction) const
 {
     auto it = m_gestures.find(direction);
-    return it != m_gestures.end() ? it.value().second : QString();
+    if (it == m_gestures.end())
+        return QString();
+    switch (it.value().action.type) {
+    case ButtonAction::PresetRef: return QStringLiteral("preset");
+    case ButtonAction::Keystroke: return QStringLiteral("keystroke");
+    default:                      return QString();
+    }
+}
+
+QString DeviceModel::gestureActionPayload(const QString &direction) const
+{
+    auto it = m_gestures.find(direction);
+    return it != m_gestures.end() ? it.value().action.payload : QString();
+}
+
+ButtonAction DeviceModel::gestureAction(const QString &direction) const
+{
+    auto it = m_gestures.find(direction);
+    return it != m_gestures.end() ? it.value().action
+                                  : ButtonAction{ButtonAction::Default, {}};
 }
 
 void DeviceModel::resetAllProfiles()
@@ -775,6 +864,21 @@ QString DeviceModel::gnomeTrayStatus() const
     default:
         return QString();
     }
+}
+
+QString DeviceModel::appIndicatorInstallCommand() const
+{
+    switch (logitune::util::detectDistroFamily()) {
+    case logitune::util::DistroFamily::Arch:
+        return QStringLiteral("sudo pacman -S gnome-shell-extension-appindicator");
+    case logitune::util::DistroFamily::Debian:
+        return QStringLiteral("sudo apt install gnome-shell-extension-appindicator");
+    case logitune::util::DistroFamily::Fedora:
+        return QStringLiteral("sudo dnf install gnome-shell-extension-appindicator");
+    case logitune::util::DistroFamily::Unknown:
+        return QStringLiteral("Install gnome-shell-extension-appindicator via your package manager.");
+    }
+    Q_UNREACHABLE();
 }
 
 void DeviceModel::setActiveWmClass(const QString &wmClass)

@@ -5,7 +5,7 @@
 #include <QTemporaryDir>
 #include <memory>
 
-#include "AppController.h"
+#include "AppRoot.h"
 #include "DeviceSession.h"
 #include "PhysicalDevice.h"
 #include "ProfileEngine.h"
@@ -18,16 +18,17 @@
 
 namespace logitune::test {
 
-class AppControllerFixture : public ::testing::Test {
+class AppRootFixture : public ::testing::Test {
 protected:
     void SetUp() override {
         ensureApp();
+        clearTestAppConfig();
         ASSERT_TRUE(m_tmpDir.isValid());
 
         m_desktop  = new MockDesktop();
         m_injector = new MockInjector();
 
-        m_ctrl = std::make_unique<AppController>(m_desktop, m_injector);
+        m_ctrl = std::make_unique<AppRoot>(m_desktop, m_injector);
         m_ctrl->init();
 
         m_profilesDir = m_tmpDir.path() + QStringLiteral("/profiles");
@@ -44,30 +45,45 @@ protected:
         defaultProfile.thumbWheelMode      = QStringLiteral("scroll");
         ProfileEngine::saveProfile(m_profilesDir + QStringLiteral("/default.conf"), defaultProfile);
 
-        m_ctrl->m_profileEngine.setDeviceConfigDir(m_profilesDir);
+        const QString kSerial = QStringLiteral("mock-serial");
 
         m_device.setupMxControls();
-        m_ctrl->m_currentDevice = &m_device;
 
-        // Create a mock DeviceSession wrapped in a PhysicalDevice and add it
-        // to the model so selectedSession()/selectedDevice() work.
         auto mockHidraw = std::make_unique<hidpp::HidrawDevice>("/dev/null");
         m_session = new DeviceSession(std::move(mockHidraw), 0xFF, "Bluetooth",
                                        nullptr, m_ctrl.get());
-        // Mark the mock session connected so DeviceModel shows its row.
-        // The real enumerateAndSetup would do this after reading state
-        // from the device; tests don't talk to real hardware.
         m_session->m_connected = true;
         m_session->m_deviceName = QStringLiteral("Mock Device");
+        // Match the seeded default profile. On real hardware enumeration
+        // fills these in and applyProfileToHardware keeps them in step; the
+        // mock session has neither, so seed them explicitly. A diverted
+        // button toggles SmartShift relative to this value, so leaving it at
+        // the zero-initialised default would make the toggle a no-op.
+        m_session->m_smartShiftEnabled = true;
+        m_session->m_smartShiftThreshold = 128;
+        // PhysicalDevice::descriptor() forwards to its primary session's
+        // descriptor(). onPhysicalDeviceAdded writes that into AppRoot's
+        // m_currentDevice, so the mock session must already know which
+        // IDevice it's backing before we drive the added flow.
+        m_session->m_activeDevice = &m_device;
 
-        m_physicalDevice = new PhysicalDevice(QStringLiteral("mock-serial"), m_ctrl.get());
+        m_physicalDevice = new PhysicalDevice(kSerial, m_ctrl.get());
         m_physicalDevice->attachTransport(m_session);
-        m_ctrl->m_deviceModel.addPhysicalDevice(m_physicalDevice);
-        m_ctrl->m_deviceModel.setSelectedIndex(0);
 
-        // Set profiles AFTER session selection (setSelectedIndex resets display values)
-        m_ctrl->m_profileEngine.setDisplayProfile(QStringLiteral("default"));
-        m_ctrl->m_profileEngine.setHardwareProfile(QStringLiteral("default"));
+        // Drive through the normal device-added flow.
+        m_ctrl->onPhysicalDeviceAdded(m_physicalDevice);
+
+        // setupProfileForDevice points the engine at AppConfigLocation
+        // (the real config dir, scoped to test mode). Tests need their
+        // temp dir instead, so re-register here and force a display
+        // profile refresh. setDisplayProfile short-circuits when the
+        // name matches its current value, so bounce through "" to make
+        // the engine re-emit with the freshly loaded cache values.
+        m_ctrl->m_profileEngine.registerDevice(kSerial, m_profilesDir);
+        m_ctrl->m_profileEngine.setDisplayProfile(kSerial, QString());
+        m_ctrl->m_profileEngine.setHardwareProfile(kSerial, QString());
+        m_ctrl->m_profileEngine.setDisplayProfile(kSerial, QStringLiteral("default"));
+        m_ctrl->m_profileEngine.setHardwareProfile(kSerial, QStringLiteral("default"));
     }
 
     void TearDown() override {
@@ -88,13 +104,14 @@ protected:
                           int dpi = 1000,
                           const QString &thumbMode = QStringLiteral("scroll"))
     {
-        Profile p = m_ctrl->m_profileEngine.cachedProfile(QStringLiteral("default"));
+        const QString kSerial = QStringLiteral("mock-serial");
+        Profile p = m_ctrl->m_profileEngine.cachedProfile(kSerial, QStringLiteral("default"));
         p.name           = profileName;
         p.dpi            = dpi;
         p.thumbWheelMode = thumbMode;
 
         ProfileEngine::saveProfile(m_profilesDir + "/" + profileName + ".conf", p);
-        m_ctrl->m_profileEngine.createProfileForApp(wmClass, profileName);
+        m_ctrl->m_profileEngine.createProfileForApp(kSerial, wmClass, profileName);
         m_ctrl->m_profileModel.restoreProfile(wmClass, profileName);
     }
 
@@ -108,7 +125,8 @@ protected:
                           const QString &scrollDirection = "standard",
                           bool hiResScroll = true)
     {
-        Profile p = m_ctrl->m_profileEngine.cachedProfile(QStringLiteral("default"));
+        const QString kSerial = QStringLiteral("mock-serial");
+        Profile p = m_ctrl->m_profileEngine.cachedProfile(kSerial, QStringLiteral("default"));
         p.name                = profileName;
         p.dpi                 = dpi;
         p.thumbWheelMode      = thumbMode;
@@ -118,32 +136,34 @@ protected:
         p.scrollDirection     = scrollDirection;
         p.hiResScroll         = hiResScroll;
 
-        m_ctrl->m_profileEngine.createProfileForApp(wmClass, profileName);
-        Profile &cached = m_ctrl->m_profileEngine.cachedProfile(profileName);
+        m_ctrl->m_profileEngine.createProfileForApp(kSerial, wmClass, profileName);
+        Profile &cached = m_ctrl->m_profileEngine.cachedProfile(kSerial, profileName);
         cached = p;
         ProfileEngine::saveProfile(m_profilesDir + "/" + profileName + ".conf", p);
         m_ctrl->m_profileModel.restoreProfile(wmClass, profileName);
     }
 
     void setProfileButton(const QString &profileName, int buttonIdx, const ButtonAction &action) {
-        Profile &p = m_ctrl->m_profileEngine.cachedProfile(profileName);
+        const QString kSerial = QStringLiteral("mock-serial");
+        Profile &p = m_ctrl->m_profileEngine.cachedProfile(kSerial, profileName);
         if (buttonIdx >= 0 && buttonIdx < static_cast<int>(p.buttons.size()))
             p.buttons[static_cast<std::size_t>(buttonIdx)] = action;
-        m_ctrl->m_profileEngine.saveProfileToDisk(profileName);
+        m_ctrl->m_profileEngine.saveProfileToDisk(kSerial, profileName);
     }
 
     void setProfileGesture(const QString &profileName,
                            const QString &direction,
                            const QString &keystroke)
     {
-        Profile &p = m_ctrl->m_profileEngine.cachedProfile(profileName);
+        const QString kSerial = QStringLiteral("mock-serial");
+        Profile &p = m_ctrl->m_profileEngine.cachedProfile(kSerial, profileName);
         p.gestures[direction] = ButtonAction{ButtonAction::Keystroke, keystroke};
-        m_ctrl->m_profileEngine.saveProfileToDisk(profileName);
+        m_ctrl->m_profileEngine.saveProfileToDisk(kSerial, profileName);
     }
 
     void focusApp(const QString &wmClass) {
         m_desktop->simulateFocus(wmClass, wmClass);
-        const QString hwProfile = m_ctrl->m_profileEngine.hardwareProfile();
+        const QString hwProfile = m_ctrl->m_profileEngine.hardwareProfile(QStringLiteral("mock-serial"));
         int hwIndex = 0;
         const int count = m_ctrl->m_profileModel.rowCount();
         for (int i = 0; i < count; ++i) {
@@ -160,26 +180,60 @@ protected:
     }
 
     void pressButton(uint16_t controlId) {
-        m_ctrl->onDivertedButtonPressed(controlId, true);
+        m_ctrl->m_buttonDispatcher.onDivertedButtonPressed(controlId, true);
     }
 
     void releaseButton(uint16_t controlId) {
-        m_ctrl->onDivertedButtonPressed(controlId, false);
+        m_ctrl->m_buttonDispatcher.onDivertedButtonPressed(controlId, false);
     }
 
     void gestureXY(int16_t dx, int16_t dy) {
-        // Feed directly into per-device state (onGestureRawXY is handled per-session now)
-        if (m_session) {
-            auto &state = m_ctrl->m_perDeviceState[m_session->deviceId()];
-            if (state.gestureActive) {
-                state.gestureAccumX += dx;
-                state.gestureAccumY += dy;
-            }
-        }
+        m_ctrl->m_buttonDispatcher.onGestureRaw(dx, dy);
     }
 
     void thumbWheel(int delta) {
-        m_ctrl->onThumbWheelRotation(delta);
+        m_ctrl->m_buttonDispatcher.onThumbWheelRotation(delta);
+    }
+
+    // Adds a second mock device and registers it through the normal flow.
+    // Returns the new PhysicalDevice for test-level manipulation.
+    PhysicalDevice* addMockDevice(const QString &serialSuffix,
+                                  int seedDpi = 1000) {
+        const QString serial = QStringLiteral("mock-serial-") + serialSuffix;
+        const QString devProfilesDir = m_tmpDir.path()
+            + "/" + serial + "/profiles";
+        QDir().mkpath(devProfilesDir);
+
+        Profile seed;
+        seed.name = QStringLiteral("Default");
+        seed.dpi  = seedDpi;
+        ProfileEngine::saveProfile(devProfilesDir + "/default.conf", seed);
+
+        m_ctrl->m_profileEngine.registerDevice(serial, devProfilesDir);
+
+        auto mockHidraw = std::make_unique<hidpp::HidrawDevice>("/dev/null");
+        auto *session = new DeviceSession(std::move(mockHidraw), 0xFF,
+                                          "Bluetooth", nullptr, m_ctrl.get());
+        session->m_connected = true;
+        session->m_deviceName = QStringLiteral("Mock Device ") + serialSuffix;
+        session->m_activeDevice = &m_device;  // reuse the fixture's MockDevice descriptor
+
+        auto *device = new PhysicalDevice(serial, m_ctrl.get());
+        device->attachTransport(session);
+
+        m_ctrl->onPhysicalDeviceAdded(device);
+
+        // Same bounce as SetUp: setupProfileForDevice wrote a stale
+        // default.conf into AppConfigLocation using the mock's zero DPI;
+        // re-register at our temp dir and force a display-profile emit
+        // with the properly seeded cache.
+        m_ctrl->m_profileEngine.registerDevice(serial, devProfilesDir);
+        m_ctrl->m_profileEngine.setDisplayProfile(serial, QString());
+        m_ctrl->m_profileEngine.setHardwareProfile(serial, QString());
+        m_ctrl->m_profileEngine.setDisplayProfile(serial, QStringLiteral("default"));
+        m_ctrl->m_profileEngine.setHardwareProfile(serial, QStringLiteral("default"));
+
+        return device;
     }
 
     // -----------------------------------------------------------------------
@@ -193,28 +247,30 @@ protected:
     ActionModel   &actionModel()   { return m_ctrl->m_actionModel; }
     ActionExecutor &actionExecutor() { return m_ctrl->m_actionExecutor; }
 
-    const IDevice *currentDevice() const { return m_ctrl->m_currentDevice; }
-
     int gestureTotalDx() const {
         if (!m_session) return 0;
-        auto it = m_ctrl->m_perDeviceState.find(m_session->deviceId());
-        return it != m_ctrl->m_perDeviceState.end() ? it->gestureAccumX : 0;
+        auto &state = m_ctrl->m_buttonDispatcher.m_state;
+        auto it = state.find(m_session->deviceId());
+        return it != state.end() ? it->gestureAccumX : 0;
     }
     int gestureTotalDy() const {
         if (!m_session) return 0;
-        auto it = m_ctrl->m_perDeviceState.find(m_session->deviceId());
-        return it != m_ctrl->m_perDeviceState.end() ? it->gestureAccumY : 0;
+        auto &state = m_ctrl->m_buttonDispatcher.m_state;
+        auto it = state.find(m_session->deviceId());
+        return it != state.end() ? it->gestureAccumY : 0;
     }
     bool gestureActive() const {
         if (!m_session) return false;
-        auto it = m_ctrl->m_perDeviceState.find(m_session->deviceId());
-        return it != m_ctrl->m_perDeviceState.end() ? it->gestureActive : false;
+        auto &state = m_ctrl->m_buttonDispatcher.m_state;
+        auto it = state.find(m_session->deviceId());
+        return it != state.end() ? it->gestureActive : false;
     }
 
     int thumbAccum() const {
         if (!m_session) return 0;
-        auto it = m_ctrl->m_perDeviceState.find(m_session->deviceId());
-        return it != m_ctrl->m_perDeviceState.end() ? it->thumbAccum : 0;
+        auto &state = m_ctrl->m_buttonDispatcher.m_state;
+        auto it = state.find(m_session->deviceId());
+        return it != state.end() ? it->thumbAccum : 0;
     }
 
     void setThumbWheelMode(const QString &mode) {
@@ -233,7 +289,7 @@ protected:
     MockDevice    m_device;
     DeviceSession *m_session = nullptr;
     PhysicalDevice *m_physicalDevice = nullptr;
-    std::unique_ptr<AppController> m_ctrl;
+    std::unique_ptr<AppRoot> m_ctrl;
     QString       m_profilesDir;
     QTemporaryDir m_tmpDir;
 };

@@ -14,11 +14,12 @@
 #include <QTimer>
 #include <QLockFile>
 #include <QStandardPaths>
+#include <QSystemTrayIcon>
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusVariant>
 
-#include "AppController.h"
+#include "AppRoot.h"
 #include "models/EditorModel.h"
 #include "logging/LogManager.h"
 #include "logging/CrashHandler.h"
@@ -55,7 +56,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setOrganizationName("Logitune");
     app.setApplicationName("Logitune");
-    app.setApplicationVersion(QStringLiteral(PROJECT_VERSION));
+    app.setApplicationVersion(QStringLiteral(PROJECT_VERSION_FULL));
     app.setQuitOnLastWindowClosed(false);  // tray icon keeps app alive
     app.setWindowIcon(QIcon(":/Logitune/qml/assets/logitune-icon.svg"));
 
@@ -79,9 +80,15 @@ int main(int argc, char *argv[])
                        "device pages to edit slot positions, hotspots, and images. "
                        "Save writes back to the source descriptor JSON."));
     parser.addOption(editOption);
+    QCommandLineOption minimizedOption(
+        QStringLiteral("minimized"),
+        QStringLiteral("Start hidden to the system tray. Intended for autostart "
+                       "launchers; ignored if no system tray is available."));
+    parser.addOption(minimizedOption);
     parser.process(app);
     const bool simulateAll = parser.isSet(simulateAllOption);
     const bool editMode = parser.isSet(editOption);
+    const bool startMinimized = parser.isSet(minimizedOption);
 
     // Single-instance guard — prevent two instances fighting over the device
     QLockFile lockFile(QStandardPaths::writableLocation(QStandardPaths::TempLocation)
@@ -162,8 +169,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    // AppController
-    logitune::AppController controller;
+    // AppRoot
+    logitune::AppRoot controller;
     controller.init();
 
     // QML engine
@@ -189,13 +196,15 @@ int main(int argc, char *argv[])
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     qmlRegisterSingletonInstance("Logitune", 1, 0, "DeviceModel",    controller.deviceModel());
     qmlRegisterSingletonInstance("Logitune", 1, 0, "ButtonModel",    controller.buttonModel());
-    qmlRegisterSingletonInstance("Logitune", 1, 0, "ActionModel",    controller.actionModel());
+    qmlRegisterSingletonInstance("Logitune", 1, 0, "ActionModel",    controller.actionFilterModel());
+    qmlRegisterSingletonInstance("Logitune", 1, 0, "GestureActionModel", controller.gestureActionFilterModel());
     qmlRegisterSingletonInstance("Logitune", 1, 0, "ProfileModel",   controller.profileModel());
     qmlRegisterSingletonInstance("Logitune", 1, 0, "SettingsModel",  controller.settingsModel());
 #else
     engine.rootContext()->setContextProperty("DeviceModel",    controller.deviceModel());
     engine.rootContext()->setContextProperty("ButtonModel",    controller.buttonModel());
-    engine.rootContext()->setContextProperty("ActionModel",    controller.actionModel());
+    engine.rootContext()->setContextProperty("ActionModel",    controller.actionFilterModel());
+    engine.rootContext()->setContextProperty("GestureActionModel", controller.gestureActionFilterModel());
     engine.rootContext()->setContextProperty("ProfileModel",   controller.profileModel());
     engine.rootContext()->setContextProperty("SettingsModel",  controller.settingsModel());
 
@@ -251,6 +260,35 @@ int main(int argc, char *argv[])
     });
     QObject::connect(tray.quitAction(), &QAction::triggered, &app, &QApplication::quit);
     tray.show();
+
+    // QSystemTrayIcon::isVisible() returns true as soon as show() is called,
+    // even when no StatusNotifier host exists to actually render the icon.
+    // isSystemTrayAvailable() is the real capability check: it returns false
+    // on GNOME Wayland without an AppIndicator extension. Using the wrong
+    // check stranded users with no way to reach the app after --minimized
+    // autostart on a session without a tray.
+    const bool trayVisible = QSystemTrayIcon::isSystemTrayAvailable();
+    if (!trayVisible) {
+        // Without a tray icon (e.g. GNOME with no AppIndicator extension)
+        // there is no way to re-open the window or quit from a tray menu, so
+        // closing the window must terminate the process or the user gets
+        // stranded with an invisible running app.
+        app.setQuitOnLastWindowClosed(true);
+        qCInfo(lcApp) << "Tray unavailable -- closing the last window will "
+                         "quit the app";
+    }
+    if (startMinimized && trayVisible) {
+        for (QObject *obj : engine.rootObjects()) {
+            if (auto *window = qobject_cast<QQuickWindow*>(obj))
+                window->hide();
+        }
+        qCInfo(lcApp) << "Startup: minimized to tray";
+    } else if (startMinimized && !trayVisible) {
+        qCInfo(lcApp) << "Startup: --minimized requested but tray is not "
+                         "visible, showing window";
+    } else {
+        qCDebug(lcApp) << "Startup: showing window";
+    }
 
     qCInfo(lcApp) << "Startup complete";
 

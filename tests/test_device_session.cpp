@@ -117,6 +117,22 @@ TEST_F(DeviceSessionTest, SetDPISkipsWhenNotConnected) {
     EXPECT_EQ(session->currentDPI(), 0);
 }
 
+TEST_F(DeviceSessionTest, SetDPIEmitsCurrentDPIChangedWhenConnected) {
+    auto session = makeSession();
+    session->setConnectedForTest(true);
+    QSignalSpy spy(session.get(), &DeviceSession::currentDPIChanged);
+    session->setDPI(2000);
+    EXPECT_EQ(spy.count(), 1);
+}
+
+TEST_F(DeviceSessionTest, SetDPISkipsEmitWhenNotConnected) {
+    auto session = makeSession();
+    // Default: m_connected = false
+    QSignalSpy spy(session.get(), &DeviceSession::currentDPIChanged);
+    session->setDPI(2000);
+    EXPECT_EQ(spy.count(), 0);
+}
+
 TEST_F(DeviceSessionTest, CycleDpiSkipsWhenNotConnected) {
     auto session = makeSession();
     session->cycleDpi();
@@ -143,10 +159,10 @@ TEST_F(DeviceSessionTest, DivertButtonSkipsWhenNotConnected) {
     // No crash, no assertion — just a no-op
 }
 
-TEST_F(DeviceSessionTest, FlushCommandQueueWhenEmpty) {
+TEST_F(DeviceSessionTest, FlushCommandProcessorWhenEmpty) {
     auto session = makeSession();
-    session->flushCommandQueue();
-    // No crash — safe on null command queue
+    session->flushCommandProcessor();
+    // No crash — safe on null command processor
 }
 
 TEST_F(DeviceSessionTest, TouchResponseTime) {
